@@ -3,12 +3,13 @@ from flask_cors import CORS
 import sqlite3
 from datetime import datetime, timedelta
 import io
+import os
 
 app = Flask(__name__)
 CORS(app)
 DB = "fridge.db"
 
-# ---------------- INIT DB + SEED ----------------
+# ---------------- INIT DB + SEED (100 PRODUITS) ----------------
 def init_db():
     conn = sqlite3.connect(DB)
     c = conn.cursor()
@@ -23,21 +24,58 @@ def init_db():
     )
     """)
     conn.commit()
+    
     c.execute("SELECT COUNT(*) FROM products")
     if c.fetchone()[0] == 0:
         today = datetime.now().date()
-        demo = [
-            ("Lait demi-ecrémé",     6,  8.50,  str(today + timedelta(days=2)),  "3017620422003"),
-            ("Yaourt nature",         4,  4.20,  str(today + timedelta(days=5)),  "3033490004743"),
-            ("Poulet entier",         2, 45.00,  str(today + timedelta(days=1)),  "3256220088149"),
-            ("Fromage Kiri",          3, 18.90,  str(today - timedelta(days=2)),  "3073781011812"),
-            ("Jus d'orange",          2, 12.00,  str(today + timedelta(days=14)), "5449000131805"),
-            ("Beurre doux",           1, 22.50,  str(today + timedelta(days=30)), "3017620401039"),
-            ("Oeufs frais x12",       1, 19.00,  str(today + timedelta(days=20)), "3560070976478"),
-            ("Mortadelle",            2, 14.50,  str(today - timedelta(days=1)),  "3270190113402"),
-            ("Creme fraiche",         1, 11.00,  str(today + timedelta(days=6)),  "3245411100038"),
-            ("Eau minérale x6",       3,  9.00,  str(today + timedelta(days=90)), "5449000000439"),
+        
+        # Liste de base pour générer de la variété
+        base_items = [
+            ("Lait demi-écrémé", 8.50, "301762042200"),
+            ("Yaourt nature", 4.20, "303349000474"),
+            ("Poulet entier", 45.00, "325622008814"),
+            ("Fromage Kiri", 18.90, "307378101181"),
+            ("Jus d'orange", 12.00, "544900013180"),
+            ("Beurre doux", 22.50, "301762040103"),
+            ("Oeufs frais x12", 19.00, "356007097647"),
+            ("Mortadelle", 14.50, "327019011340"),
+            ("Crème fraîche", 11.00, "324541110003"),
+            ("Eau minérale x6", 9.00, "544900000043"),
+            ("Tomates cerises", 13.00, "326547100123"),
+            ("Pavé de saumon", 55.00, "376012345678"),
+            ("Chocolat noir", 16.50, "311643012345"),
+            ("Pommes de terre 1kg", 7.00, "325416001234"),
+            ("Canette de Soda", 6.00, "544900000099")
         ]
+        
+        demo = []
+        for i in range(1, 101):
+            # Sélection et déclinaison des produits de base
+            base_name, base_price, base_bar = base_items[i % len(base_items)]
+            name = f"{base_name} (Lot {i//len(base_items) + 1})" if i > len(base_items) else base_name
+            
+            # Quantité aléatoire simulée par l'index
+            qty = (i % 8) + 1
+            
+            # Variations légères de prix
+            price = round(base_price * (1 + (i % 5 - 2) * 0.05), 2)
+            
+            # Distribution des dates d'expiration : 
+            # - ~15% expirés (jours négatifs)
+            # - ~25% expirent bientôt (entre 0 et 7 jours)
+            # - ~60% OK (plus de 7 jours)
+            if i % 7 == 0:
+                days_diff = -(i % 5 + 1) # Expiré
+            elif i % 4 == 0:
+                days_diff = i % 8        # Bientôt expiré (0 à 7 jours)
+            else:
+                days_diff = (i % 25) + 8  # En bon état
+                
+            expiry = str(today + timedelta(days=days_diff))
+            barcode = f"{base_bar}{i:02d}"
+            
+            demo.append((name, qty, price, expiry, barcode))
+            
         c.executemany("INSERT INTO products(name,qty,price,expiry,barcode) VALUES(?,?,?,?,?)", demo)
         conn.commit()
     conn.close()
@@ -153,7 +191,6 @@ def export_pdf():
                                     Paragraph, Spacer, HRFlowable)
     from reportlab.lib.units import cm
     from reportlab.graphics.shapes import Drawing, Rect, String
-    from reportlab.graphics import renderPDF
 
     rows  = get_all_products()
     kpis  = compute_kpis(rows)
@@ -171,8 +208,6 @@ def export_pdf():
     AMB_C   = colors.HexColor("#D97706")
     GRN_BG  = colors.HexColor("#D1FAE5")
     GRN_C   = colors.HexColor("#059669")
-    SLATE   = colors.HexColor("#475569")
-    LIGHT   = colors.HexColor("#94A3B8")
     WHITE   = colors.white
 
     W = A4[0] - 3.6*cm   # usable width
@@ -187,9 +222,7 @@ def export_pdf():
 
     story = []
 
-    # ════════════════════════════════════════════════
     # 1. HEADER BANNER
-    # ════════════════════════════════════════════════
     hdr = Table([[
         Paragraph(
             '<font name="Helvetica-Bold" size="20" color="#FFFFFF">FridgeMind</font><br/>'
@@ -213,9 +246,7 @@ def export_pdf():
     ]))
     story += [hdr, Spacer(1, 0.45*cm)]
 
-    # ════════════════════════════════════════════════
-    # 2. KPI CARDS — vraies données du dashboard
-    # ════════════════════════════════════════════════
+    # 2. KPI CARDS
     waste_pct = round(kpis["waste"] / kpis["total_value"] * 100, 1) if kpis["total_value"] else 0
 
     def kpi(label, val, sub, bg, border_c, val_c):
@@ -229,10 +260,10 @@ def export_pdf():
 
     cw = W / 4
     kpi_tbl = Table([[
-        kpi("Total produits",     kpis["total"],           f"{kpis['ok']} en bonne etat",       BLUE_LT, BLUE,  BLUE),
-        kpi("Expires",            kpis["expired"],         f"a retirer du stock",                RED_BG,  RED_C, RED_C),
-        kpi("Expirent bientot",   kpis["near"],            "dans les 7 prochains jours",         AMB_BG,  AMB_C, AMB_C),
-        kpi("Valeur totale",      f"{kpis['total_value']} DH", f"dont {kpis['waste']} DH perdus ({waste_pct}%)", GRN_BG, GRN_C, GRN_C),
+        kpi("Total produits",     kpis["total"],           f"{kpis['ok']} en bon état",     BLUE_LT, BLUE,  BLUE),
+        kpi("Expirés",            kpis["expired"],         f"à retirer du stock",               RED_BG,  RED_C, RED_C),
+        kpi("Expirent bientôt",   kpis["near"],            "dans les 7 jours",         AMB_BG,  AMB_C, AMB_C),
+        kpi("Valeur totale",      f"{kpis['total_value']} DH", f"{kpis['waste']} DH perdus ({waste_pct}%)", GRN_BG, GRN_C, GRN_C),
     ]], colWidths=[cw]*4, rowHeights=[1.7*cm])
     kpi_tbl.setStyle(TableStyle([
         ("LINEAFTER",  (0,0),(2,0), 0.5, BORDER),
@@ -244,9 +275,7 @@ def export_pdf():
     ]))
     story += [kpi_tbl, Spacer(1, 0.5*cm)]
 
-    # ════════════════════════════════════════════════
-    # 3. BARRE DE STATUT VISUELLE (mini chart inline)
-    # ════════════════════════════════════════════════
+    # 3. BARRE DE STATUT VISUELLE
     if kpis["total"] > 0:
         bar_w = W
         bar_h = 10
@@ -260,12 +289,11 @@ def export_pdf():
             if w > 0:
                 d.add(Rect(x, 10, w, bar_h, fillColor=col, strokeColor=None))
                 x += w
-        # légende
         lx = 0
         for label, w, col in [
             (f"OK: {kpis['ok']}", ok_w, GRN_C),
-            (f"Bientot: {kpis['near']}", near_w, AMB_C),
-            (f"Expires: {kpis['expired']}", exp_w, RED_C),
+            (f"Bientôt: {kpis['near']}", near_w, AMB_C),
+            (f"Expirés: {kpis['expired']}", exp_w, RED_C),
         ]:
             if w > 0:
                 d.add(String(lx + w/2, 2, label,
@@ -275,24 +303,15 @@ def export_pdf():
 
         story += [d, Spacer(1, 0.35*cm)]
 
-    # ════════════════════════════════════════════════
     # 4. TITRE SECTION
-    # ════════════════════════════════════════════════
-    story.append(Paragraph(
-        '<font name="Helvetica-Bold" size="11" color="#0F172A">Detail du stock</font>',
-        ps(spaceAfter=4)))
+    story.append(Paragraph('<font name="Helvetica-Bold" size="11" color="#0F172A">Détail du stock</font>', ps(spaceAfter=4)))
     story.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=6))
 
-    # ════════════════════════════════════════════════
     # 5. TABLEAU PRODUITS
-    # ════════════════════════════════════════════════
     def hcell(txt):
-        return Paragraph(f'<font name="Helvetica-Bold" size="8.5" color="#FFFFFF">{txt}</font>',
-                         ps(alignment=1))
+        return Paragraph(f'<font name="Helvetica-Bold" size="8.5" color="#FFFFFF">{txt}</font>', ps(alignment=1))
 
-    headers = [hcell("Produit"), hcell("Qte"), hcell("Prix unit."),
-               hcell("Valeur"), hcell("Expiration"), hcell("Jours"), hcell("Statut")]
-
+    headers = [hcell("Produit"), hcell("Qté"), hcell("Prix un."), hcell("Valeur"), hcell("Expiration"), hcell("Jours"), hcell("Statut")]
     col_w = [W*0.27, W*0.07, W*0.11, W*0.11, W*0.13, W*0.09, W*0.22]
     tdata = [headers]
     extra_styles = []
@@ -311,32 +330,24 @@ def export_pdf():
         if days < 0:
             status_txt = "EXPIRE"
             status_col = RED_C
-            days_txt   = f"{abs(days)}j dep."
+            days_txt   = f"{abs(days)}j dép."
             extra_styles += [("BACKGROUND",(0,i),(-1,i), colors.HexColor("#FFF5F5"))]
-            row_bg = colors.HexColor("#FFF5F5")
         elif days <= 7:
-            status_txt = f"Bientot"
+            status_txt = "Bientôt"
             status_col = AMB_C
             days_txt   = f"{days}j rest."
             extra_styles += [("BACKGROUND",(0,i),(-1,i), colors.HexColor("#FFFBEB"))]
-            row_bg = colors.HexColor("#FFFBEB")
         else:
             status_txt = "OK"
             status_col = GRN_C
             days_txt   = f"{days}j"
-            row_bg = ROW_A if i % 2 == 0 else WHITE
 
-        name_p = Paragraph(
-            f'<font name="Helvetica-Bold" size="8.5" color="#1E293B">{r[1]}</font>',
-            ps(leading=11))
-        status_p = Paragraph(
-            f'<font name="Helvetica-Bold" size="8" color="{status_col.hexval()}">{status_txt}</font>',
-            ps(alignment=1))
+        name_p = Paragraph(f'<font name="Helvetica-Bold" size="8.5" color="#1E293B">{r[1]}</font>', ps(leading=11))
+        status_p = Paragraph(f'<font name="Helvetica-Bold" size="8" color="{status_col.hexval()}">{status_txt}</font>', ps(alignment=1))
 
         def c(txt, bold=False, align=1, col="#334155"):
             fn = "Helvetica-Bold" if bold else "Helvetica"
-            return Paragraph(f'<font name="{fn}" size="8.5" color="{col}">{txt}</font>',
-                             ps(alignment=align))
+            return Paragraph(f'<font name="{fn}" size="8.5" color="{col}">{txt}</font>', ps(alignment=align))
 
         tdata.append([
             name_p,
@@ -354,36 +365,29 @@ def export_pdf():
         ("ROWBACKGROUNDS",(0,1), (-1,-1), [ROW_A, WHITE]),
         ("BOX",           (0,0), (-1,-1), 0.5, BORDER),
         ("GRID",          (0,0), (-1,-1), 0.25, BORDER),
-        ("LEFTPADDING",   (0,0), (-1,-1), 6),
-        ("RIGHTPADDING",  (0,0), (-1,-1), 6),
-        ("TOPPADDING",    (0,0), (-1,-1), 6),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
         ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ] + extra_styles
 
     prod_tbl = Table(tdata, colWidths=col_w, repeatRows=1)
     prod_tbl.setStyle(TableStyle(base))
     story += [prod_tbl, Spacer(1, 0.5*cm)]
 
-    # ════════════════════════════════════════════════
     # 6. RÉSUMÉ FINANCIER
-    # ════════════════════════════════════════════════
-    story.append(Paragraph(
-        '<font name="Helvetica-Bold" size="11" color="#0F172A">Resume financier</font>',
-        ps(spaceAfter=4)))
+    story.append(Paragraph('<font name="Helvetica-Bold" size="11" color="#0F172A">Résumé financier</font>', ps(spaceAfter=4)))
     story.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=6))
 
     fin_data = [
         [Paragraph('<font name="Helvetica-Bold" size="8.5" color="#FFFFFF">Indicateur</font>', ps(alignment=0)),
          Paragraph('<font name="Helvetica-Bold" size="8.5" color="#FFFFFF">Valeur</font>', ps(alignment=2))],
         ["Valeur totale du stock",          f"{kpis['total_value']} DH"],
-        ["Pertes (produits expires)",        f"{kpis['waste']} DH"],
+        ["Pertes (produits expirés)",        f"{kpis['waste']} DH"],
         ["Taux de gaspillage",               f"{waste_pct} %"],
-        ["Produits sains (non expires)",     f"{kpis['ok'] + kpis['near']} / {kpis['total']}"],
+        ["Produits sains (non expirés)",     f"{kpis['ok'] + kpis['near']} / {kpis['total']}"],
         ["Produits critiques (≤7j + exp.)", f"{kpis['near'] + kpis['expired']} produits"],
     ]
     def fin_row(label, val, i):
-        bg = ROW_A if i % 2 == 0 else WHITE
         return [
             Paragraph(f'<font name="Helvetica" size="9" color="#334155">{label}</font>', ps()),
             Paragraph(f'<font name="Helvetica-Bold" size="9" color="#0F172A">{val}</font>', ps(alignment=2)),
@@ -395,29 +399,27 @@ def export_pdf():
         ("ROWBACKGROUNDS",(0,1), (-1,-1), [ROW_A, WHITE]),
         ("BOX",           (0,0), (-1,-1), 0.5, BORDER),
         ("GRID",          (0,0), (-1,-1), 0.25, BORDER),
-        ("LEFTPADDING",   (0,0), (-1,-1), 10),
-        ("RIGHTPADDING",  (0,0), (-1,-1), 10),
         ("TOPPADDING",    (0,0), (-1,-1), 7),
         ("BOTTOMPADDING", (0,0), (-1,-1), 7),
     ]))
     story += [fin_tbl, Spacer(1, 0.4*cm)]
 
-    # ════════════════════════════════════════════════
     # 7. FOOTER
-    # ════════════════════════════════════════════════
     story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER))
     story.append(Spacer(1, 0.12*cm))
     story.append(Paragraph(
         f'<font name="Helvetica" size="7.5" color="#94A3B8">'
-        f'FridgeMind · Rapport genere le {datetime.now().strftime("%d/%m/%Y a %H:%M")} · '
+        f'FridgeMind · Rapport généré le {datetime.now().strftime("%d/%m/%Y à %H:%M")} · '
         f'{kpis["total"]} produit(s) · Valeur : {kpis["total_value"]} DH · '
         f'Pertes : {kpis["waste"]} DH ({waste_pct}%)</font>',
-        ps(alignment=1)))
+        doc.build(story) if False else ps(alignment=1)))
 
     doc.build(story)
     buffer.seek(0)
-    return send_file(buffer, mimetype='application/pdf',
-                     as_attachment=True, download_name='fridgemind_report.pdf')
+    return send_file(buffer, mimetype='application/pdf', as_attachment=True, download_name='fridgemind_report.pdf')
 
+# ----------------- CONFIGURATION RENDER -----------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Écoute sur toutes les interfaces réseau (0.0.0.0) et utilise le port dynamique de Render
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
