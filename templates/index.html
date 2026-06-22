@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FridgeMind</title>
+  <link rel="stylesheet" href="/static/css/style.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+
+<!-- TOAST -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <span class="logo-icon">🧊</span>
+    <div>
+      <div class="logo-text">FridgeMind</div>
+      <div class="logo-sub">Smart inventory</div>
+    </div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <div class="nav-group-label">Menu</div>
+    <button class="nav-btn" data-page="page-dashboard" onclick="showPage('page-dashboard')">
+      <span class="nav-icon">📊</span>
+      <span>Dashboard</span>
+    </button>
+    <button class="nav-btn" data-page="page-stock" onclick="showPage('page-stock')">
+      <span class="nav-icon">📦</span>
+      <span>Stock</span>
+      <span class="nav-badge" id="alertBadge">0</span>
+    </button>
+    <button class="nav-btn" data-page="page-scanner" onclick="showPage('page-scanner')">
+      <span class="nav-icon">📷</span>
+      <span>Scanner</span>
+    </button>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span class="live-dot"></span> Live sync on
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <header class="topbar">
+    <span id="topbarTitle" class="topbar-title">Dashboard</span>
+    <div class="topbar-actions">
+      <button class="btn btn-outline" onclick="exportPDF()">⬇️ Export PDF</button>
+      <button class="btn btn-primary" onclick="openAddModal()">+ Add Product</button>
+    </div>
+  </header>
+
+  <!-- DASHBOARD -->
+  <div id="page-dashboard" class="page">
+    <div id="expiredBanner" class="alert-banner danger"><span></span></div>
+    <div id="nearBanner" class="alert-banner"><span></span></div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon blue">📦</div>
+        <div class="stat-info">
+          <div class="stat-label">Total Products</div>
+          <div class="stat-value blue" id="totalProducts">—</div>
+          <div class="stat-sub">in stock</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon red">⛔</div>
+        <div class="stat-info">
+          <div class="stat-label">Expired</div>
+          <div class="stat-value red" id="expiredProducts">—</div>
+          <div class="stat-sub">needs removal</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon amber">⚠️</div>
+        <div class="stat-info">
+          <div class="stat-label">Expiring Soon</div>
+          <div class="stat-value amber" id="nearExpiryProducts">—</div>
+          <div class="stat-sub">within 7 days</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon green">💸</div>
+        <div class="stat-info">
+          <div class="stat-label">Estimated Waste</div>
+          <div class="stat-value green" id="wasteCost">—</div>
+          <div class="stat-sub">from expired items</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-grid">
+      <div class="chart-card">
+        <div class="chart-title">💰 Value at Risk by Category</div>
+        <div class="chart-wrapper"><canvas id="wasteChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">📅 Expiry Status Overview</div>
+        <div class="chart-wrapper"><canvas id="expiryChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STOCK -->
+  <div id="page-stock" class="page">
+    <div id="expiredBanner2" style="display:none"></div>
+    <div class="table-card">
+      <div class="table-toolbar">
+        <input type="text" id="searchInput" class="search-input" placeholder="🔍 Search by name or barcode…" oninput="filterTable()"/>
+        <button id="refreshBtn" class="btn btn-outline" onclick="refreshAll()">↻ Refresh</button>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Price</th>
+              <th>Expiry</th>
+              <th>Barcode</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="stockTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCANNER -->
+  <div id="page-scanner" class="page">
+    <div class="scan-page-grid">
+      <div class="scanner-container">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <h3 style="font-size:15px;font-weight:600;margin:0">📷 Scanner</h3>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span id="scanStatus" style="font-size:12px;color:var(--text-muted)">En attente...</span>
+            <button id="toggleScanBtn" class="btn btn-primary btn-sm" onclick="toggleScanner()">Demarrer la camera</button>
+          </div>
+        </div>
+        <div id="reader"></div>
+        <div id="scanResult" class="scan-result">Pointez la camera vers un code-barres ou QR code...</div>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+          <input type="text" id="manualBarcode" class="form-control" placeholder="Ou tapez un code-barres manuellement..." style="flex:1" onkeydown="if(event.key==='Enter') manualLookup()"/>
+          <button class="btn btn-primary" onclick="manualLookup()">Rechercher</button>
+        </div>
+        <p id="scannedCode" style="font-size:11px;color:var(--text-muted);margin-top:8px"></p>
+        <div style="margin-top:10px;padding:8px 12px;background:var(--bg);border-radius:var(--radius-sm);font-size:11px;color:var(--text-muted)">
+          ✅ Formats supportes : QR Code · EAN-13 · EAN-8 · Code128 · Code39 · UPC-A/E
+        </div>
+      </div>
+
+      <div class="scan-info-card">
+        <h3>Details du produit</h3>
+        <div id="scanDetail" style="color:var(--text-muted);font-size:13px">Scannez un produit pour voir ses details ici.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ADD / EDIT MODAL -->
+<div id="modalOverlay" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modalTitle">Add Product</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div id="productForm">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label class="form-label">Product Name *</label>
+          <input id="inp-name" class="form-control" type="text" placeholder="e.g. Yogurt, Chicken…"/>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Quantity *</label>
+          <input id="inp-qty" class="form-control" type="number" min="1" value="1"/>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Price (DH) *</label>
+          <input id="inp-price" class="form-control" type="number" min="0" step="0.01" value="0"/>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Expiry Date *</label>
+          <input id="inp-expiry" class="form-control" type="date"/>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Barcode</label>
+          <input id="inp-barcode" class="form-control" type="text" placeholder="Optional"/>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveProduct()">Save Product</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
